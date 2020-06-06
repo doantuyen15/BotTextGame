@@ -1,0 +1,14 @@
+{
+  "1": {
+    "language": "vn-vn",
+    "content": "?? m�y n�",
+    "timeOut": 30000,
+    "answer": "OK"
+  },
+  "2": {
+    "language": "vn-vn",
+    "content": "1 + 1 b?ng m?y",
+    "timeOut": 30000,
+    "answer": 2
+  }
+}
