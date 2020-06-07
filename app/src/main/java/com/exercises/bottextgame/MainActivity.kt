@@ -1,6 +1,5 @@
 package com.exercises.bottextgame
 
-import android.annotation.SuppressLint
 import android.os.Bundle
 import android.util.Log
 
@@ -8,7 +7,6 @@ import androidx.appcompat.app.AppCompatActivity
 import com.exercises.bottextgame.models.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
-import com.google.firebase.database.snapshot.ChildKey
 import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
@@ -71,20 +69,22 @@ class MainActivity : AppCompatActivity() {
 //                playerHp.add(100)
 //                playerStatus[it] = PLayerStatus(playerHp[playerId.indexOf(it)])
 //            }
-            var round: Int = 1
+            var round = 1
             repeat(5) { _ ->
-                val result = HashMap<String, Any?>()
-                result["quiz"] = Quiz(content = "đố m nè", answer = "ok")
-                result["round"] = round
-                currentRoom!!.updateChildren(result).await()
+                val command = HashMap<String, Any?>()
+                val quizId = (1..45).toMutableList()
+                val randomId = quizId.random()
+                quizId.remove(randomId)
+                command["round"] = Round(round, randomId.toString())
+                currentRoom!!.updateChildren(command).await()
                 val timeOut = 10000L
                 val attackers = withContext(Dispatchers.Default) {
                     waitForAnswer(timeOut, roomid)
                 }
                 if (attackers.isNullOrEmpty()) {
-                    result["surrender"] = "round$round"
-                    result["attacker"] = null
-                    result["defender"] = null
+                    command["surrender"] = "round$round"
+                    command["attacker"] = null
+                    command["defender"] = null
 //                    playerHp.forEachIndexed{i,j -> playerHp[i]=j-5L}
                     var updateStatus = ""
                     playerStatusList.forEach { value ->
@@ -94,9 +94,9 @@ class MainActivity : AppCompatActivity() {
                     val attacker = attackers[0]
                     Log.d("startQuiz", "attacker is $attacker")
                     val defender = attackers.getOrNull(1)
-                    result["attacker"] = attacker
-                    result["surrender"] = null
-                    result["defender"] = defender
+                    command["attacker"] = attacker
+                    command["surrender"] = null
+                    command["defender"] = defender
                     playerStatusList.forEachIndexed { index, value ->
                         if (index != playerIdList.indexOf(attacker)) {
                             value!!.playerHp -= 5L
@@ -108,10 +108,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 round++
-                result["userStatus"] = playerIdList.zip(playerStatusList).toMap()
-                result["round"] = round
+                command["userStatus"] = playerIdList.zip(playerStatusList).toMap()
+                command["round"] = round
 //                Log.d("startQuiz", "HP is $playerHp")
-                currentRoom.updateChildren(result).await()
+                currentRoom.updateChildren(command).await()
                 delay(5000)
             }
         }
