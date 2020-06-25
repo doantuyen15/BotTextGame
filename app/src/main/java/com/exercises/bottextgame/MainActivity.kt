@@ -2,144 +2,253 @@ package com.exercises.bottextgame
 
 import android.os.Bundle
 import android.util.Log
-
 import androidx.appcompat.app.AppCompatActivity
-import com.exercises.bottextgame.models.*
+import com.exercises.bottextgame.models.Message
+import com.exercises.bottextgame.models.Quiz
+import com.exercises.bottextgame.models.Result
+import com.exercises.bottextgame.models.Round
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.*
+import com.google.firebase.database.ChildEventListener
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.ValueEventListener
 import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
 
 class MainActivity : AppCompatActivity() {
-    private val commandRef = FirebaseDatabase.getInstance().getReference("/command")
-    private val roomRef = FirebaseDatabase.getInstance().getReference("/gamerooms")
-    val CHILD_ATTACKER_KEY = "Attack"
-    val attacker = HashMap<String, Long>()
-    private val playerStatusList = ArrayList<HashMap<String, Long>>()
+
+
+    @ExperimentalCoroutinesApi
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
         val userName = "admin@admin.com"
         val password = "123456"
 
         FirebaseAuth.getInstance().signInWithEmailAndPassword(userName, password)
             .addOnSuccessListener {
                 trackingCommand()
-//                trackingRoom()
             }
-        button2.setOnClickListener {
-            val test = HashMap<String, Any>()
-            val player = HashMap<String, PLayerStatus>()
-            player["uid1"] = PLayerStatus(playerName = "test1")
-            player["uid2"] = PLayerStatus(playerName = "test2")
-            test["start" + "-M8HXWXrvyyF9C3x5mcC"] = player
-            commandRef.updateChildren(test)
+        query.collection("quiz").get().addOnSuccessListener {
+            it.documents.forEach { doc ->
+                dbSorted[doc.id.toInt()] = doc.toObject(Quiz::class.java)!!
+            }
+            Log.d("database", "OK")
         }
 
-//        val taskQueue = ArrayList<String>()
-        val time = ArrayList<Long>()
-        time.add(5000L)
-        time.add(3000L)
-        var index = 0
         button.setOnClickListener {
-            val test = HashMap<String, Any>()
+            commandRef.child("asd")
+                .updateChildren(mapOf("${(1000..2000).random()}result" to "uid1"))
+        }
+
+        var i = 1
+        button2.setOnClickListener {
+//            GameService().observe()
+//            commandRef.apply {
+//                child("aaa").updateChildren(mapOf(i.toString() to "value $i"))
+//                val room = push()
+//                    room.setValue(i.toString()).addOnCompleteListener {
+//                    room.updateChildren(mapOf("test" to i))
+//                }
+//            }
 //            i++
-//            Log.d("Main", "starting task$i")
-//            test["room$i"] = "$i"
-//            getTask(test)
-            val command = "attack-M8HXWXrvyyF9C3x5mcC"
-            test["uid${index+1}"] = time[index]
-            index++
-            if(index >= 2){
-                index = 0
-            }
-            commandRef.child(command).updateChildren(test)
         }
     }
 
-    private fun startQuiz(        roomid: String?,        playerIdList: ArrayList<String>,        playerStatusList: ArrayList<PLayerStatus?>    ) {
+    private fun startQuiz(
+        roomId: String,
+        playerStatusList: ArrayList<Result>,
+        multi: Boolean
+    ) {
 //        Log.d("startQuiz", "HP is ")
-        val currentRoom = roomid?.let { roomRef.child(it) }
-        val job = GlobalScope.launch(Dispatchers.Default) {
+        var endGame = false
+        val currentRoom = roomRef.child(roomId)
+        val job = GlobalScope.launch(Dispatchers.IO) {
+            var totalPlayer = playerStatusList.count()
+            val quizId = (1..dbSorted.size).toMutableList()
+
 //            val playerStatus = HashMap<String, Any>()
 //            val playerHp = mutableListOf<Long>()
 //            playerId.forEach {
 //                playerHp.add(100)
 //                playerStatus[it] = PLayerStatus(playerHp[playerId.indexOf(it)])
 //            }
+
             var round = 1
-            repeat(5) { _ ->
+            while (!endGame) {
                 val command = HashMap<String, Any?>()
-                val quizId = (1..45).toMutableList()
                 val randomId = quizId.random()
                 quizId.remove(randomId)
                 command["round"] = Round(round, randomId.toString())
-                currentRoom!!.updateChildren(command).await()
-                val timeOut = 10000L
-                val attackers = withContext(Dispatchers.Default) {
-                    waitForAnswer(timeOut, roomid)
+                currentRoom.updateChildren(command).await()
+                val timeOut = dbSorted[randomId]?.timeOut ?: 0L
+                val attackers = withContext(Dispatchers.IO) {
+                    waitForAnswer(timeOut, roomId)
                 }
-                if (attackers.isNullOrEmpty()) {
+                //send to client round's result
+                val attacker = attackers.getOrNull(0).toString()
+                val defender = attackers.getOrNull(1).toString()
+                var messageAtk: String = ""
+                var messageDef: String = ""
+                if (!attackers.isNullOrEmpty()) {
+                    command["attacker"] = attacker
+                    attackers.getOrNull(1)?.let { command["defender"] = defender }
+                    command["surrender"] = null
+                } else {
                     command["surrender"] = "round$round"
                     command["attacker"] = null
                     command["defender"] = null
-//                    playerHp.forEachIndexed{i,j -> playerHp[i]=j-5L}
-                    var updateStatus = ""
-                    playerStatusList.forEach { value ->
-                        value?.let { it.playerHp -= 5L }
-                    }
-                } else {
-                    val attacker = attackers[0]
-                    Log.d("startQuiz", "attacker is $attacker")
-                    val defender = attackers.getOrNull(1)
-                    command["attacker"] = attacker
-                    command["surrender"] = null
-                    command["defender"] = defender
-                    playerStatusList.forEachIndexed { index, value ->
-                        if (index != playerIdList.indexOf(attacker)) {
-                            value!!.playerHp -= 5L
+                }
+                playerStatusList.map {
+                    when (it.playerId) {
+                        attacker -> {
+                            it.increaseAttack()
+                            messageAtk = ("First: ${it.playerName}")
                         }
+                        defender -> {
+                            it.increaseDefend()
+                            messageDef += ("\nSecond is: ${it.playerName}")
+                        }
+                        else -> it.increaseSurrender()
                     }
-                    defender?.let{
-                        Log.d("startQuiz", "defender is $defender")
-                        playerStatusList[playerIdList.indexOf(it)]!!.playerHp += 2
+                    if(it.isDeadOrOut()) { // return false when this player is out or lose
+                        totalPlayer--
                     }
                 }
-                round++
-                command["userStatus"] = playerIdList.zip(playerStatusList).toMap()
-                command["round"] = round
-//                Log.d("startQuiz", "HP is $playerHp")
+//                playerStatusList.forEachIndexed { index, status ->
+//                    val playerId = ""
+//                    when (index) {
+//                        playerIdList.indexOf(attacker) -> status.increaseAttack()
+//                        playerIdList.indexOf(defender) -> status.increaseDefend()
+//                        else -> status.increaseSurrender()
+//                    }
+//                    if(status.isDeadOrOut()) { // return false when this player is out or lose
+//                        totalPlayer--
+//                    }
+////                    if (index != playerIdList.indexOf(attacker) && index != playerIdList.indexOf(defender)) {
+////                        status[attacker]!!.
+////                    }
+////                    if (index == playerIdList.indexOf(defender)) {
+////                        value!!.playerHp -= 3L
+////                    }
+////                    if (value!!.playerHp <= 0L) {
+////                        totalPlayer--
+////                    }
+//               }
+                if (!multi && totalPlayer == 0) {
+                    endGame = true
+                } else if (multi && totalPlayer <= 0) {
+                    endGame = true
+                } else round++
+
+                val status = HashMap<String, Any>()
+                playerStatusList.sortByDescending{it.hp}
+                playerStatusList.forEach {
+                    status[it.playerId] = it.toMap()
+                }
+
+//                command["playerStatus"] = playerIdList.zip(playerStatusList).toMap()
+                command["playerStatus"] = status
+                var message = messageAtk
+                if (!messageDef.isBlank()){
+                    message += messageDef
+                }
+                if (message.isNotEmpty()){
+                    currentRoom.child("message").push().setValue(Message(message = message))
+                }
                 currentRoom.updateChildren(command).await()
                 delay(5000)
             }
+            //end game
+            if (endGame){
+                currentRoom.child("roomStatus").setValue("ending")
+            }
         }
+        val mEventListener = object: ValueEventListener{
+            override fun onCancelled(p0: DatabaseError) {
+            }
+            override fun onDataChange(p0: DataSnapshot) {
+                if (p0.value == true){
+                    endGame = true
+                    currentRoom.setValue(null)
+                    commandRef.child("clear$roomId").setValue(null)
+                }
+            }
+        }
+        commandRef.child("clear$roomId").addValueEventListener(mEventListener)
     }
 
-    private suspend fun waitForAnswer(timeOut: Long, roomid: String?): List<String> {
+//    private fun sendResult(
+//        currentRoom: String?,
+//        result: Map<String, Any>
+//    ) {
+//        val command = mapOf("result" to result)
+//        roomRef.child(currentRoom!!).updateChildren(command)
+//    }
+
+//    private suspend fun attackerListener() {
+//        val listener = object : ValueEventListener {
+//            override fun onCancelled(p0: DatabaseError) {
+//            }
+//
+//            override fun onDataChange(p0: DataSnapshot) {
+//                p0.children.mapIndexed { index, attacker ->
+////                if (index <= 1)
+////                    attackerId.add(index, attacker.key.toString())
+//                }
+//            }
+//        }
+//    }
+
+//    interface FirebaseCallBack{
+////        val attackerId: String
+//        fun onReceivedAttacker()
+//    }
+
+    private suspend fun waitForAnswer(timeOut: Long, roomid: String): List<String> {
         val attackerId: MutableList<String> = mutableListOf()
-        Log.d("$roomid", "waiting for answer")
+//        Log.d("$roomid", "waiting for answer")
         commandRef.child("attack$roomid").setValue(null).await()
-        commandRef.child("attack$roomid").orderByValue().addValueEventListener(object: ValueEventListener{
+//        val fbCallBack = object: FirebaseCallBack{
+//            override fun onReceivedAttacker(){
+//            }
+//        }
+        val listener = object : ValueEventListener {
+            var first = timeOut
+            var second = timeOut
             override fun onCancelled(p0: DatabaseError) {
             }
 
             override fun onDataChange(p0: DataSnapshot) {
-                p0.children.mapIndexed { index, attacker ->
-                    if (index <= 1)
-                        attackerId.add(index, attacker.key.toString())
+                p0.children.forEach {
+                    val timeStamp = it.key!!.toLong()
+                    val playerId = it.value.toString()
+                    if(timeStamp < first){
+                        first = timeStamp
+                        attackerId.add(0, playerId)
+                    } else if (timeStamp < second){
+                        second = timeStamp
+                        attackerId.add(1, playerId)
+                    }
                 }
             }
-        })
+        }
+
+        val query = commandRef.child("attack$roomid").orderByValue()
+        query.addValueEventListener(listener)
         withTimeoutOrNull(timeOut){
             while (attackerId.isEmpty()){
                 if(isActive){
-                    delay(500L)
+                    delay(200L)
                 } //Log.d("waitForAnswer", "timeout*******")
             }
             delay(1500L)
         }
+        query.removeEventListener(listener)
+//        withTimeoutOrNull(timeOut){
+//            val attackerId = UserObserver(roomid).observe()
+//        }
         return attackerId.distinct()
     }
 
@@ -181,8 +290,9 @@ class MainActivity : AppCompatActivity() {
 //        })
 //    }
 
+    @ExperimentalCoroutinesApi
     private fun trackingCommand() {
-        commandRef.addChildEventListener(object : ChildEventListener {
+        roomRef.child(CHILD_LISTROOMS_KEY).addChildEventListener(object : ChildEventListener {
             override fun onCancelled(p0: DatabaseError) {
             }
 
@@ -193,17 +303,8 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onChildAdded(p0: DataSnapshot, p1: String?) {
-                if (p0.key!!.contains("start")) {
-                    val playerIdList = ArrayList<String>()
-                    val playerStatusList = ArrayList<PLayerStatus?>()
-                    p0.children.forEach{
-                        playerIdList.add(it.key.toString())
-                        playerStatusList.add(it.getValue(PLayerStatus::class.java))
-                    }
-                    startQuiz(p0.key?.substringAfter("start"), playerIdList, playerStatusList)
-                    //delete command after finish task
-                    commandRef.child(p0.key!!).setValue(null)
-                    Log.d("trackingCommand", "added****************${p0.key}")
+                if (p0.key.toString() != "preventRemoveKey") {
+                    handleCommand(p0)
                 }
             }
 
@@ -214,49 +315,31 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    /*private fun trackingRoom() {
-        roomRef.addChildEventListener(object : ChildEventListener {
-            override fun onCancelled(p0: DatabaseError) {
-                //
-            }
-
-            override fun onChildMoved(p0: DataSnapshot, p1: String?) {
-                //
-            }
-
-            override fun onChildChanged(p0: DataSnapshot, p1: String?) {
-                addNewPlayer(p0)
-//                Log.d("trackingRoom","RoomChanged****************${p1}")
-            }
-
-            override fun onChildAdded(p0: DataSnapshot, p1: String?) {
-                addNewPlayer(p0)
-            }
-
-            override fun onChildRemoved(p0: DataSnapshot) {
-                //
-            }
-
-        })
-    }*/
-
-    /*private fun addNewPlayer(p0: DataSnapshot) {
-        p0.child("userStatus").children.forEach {
-            val playerStatus = HashMap<String, Long>()
-            playerStatus[it.key.toString()] = it.child("playerHp").value as Long
-            if (!playerStatusList.contains(playerStatus)) {
-                playerStatusList.add(playerStatus)
-                Log.d("TrackingRoom", "addNewPlayer****************${playerStatusList}")
-            }
-
+    @ExperimentalCoroutinesApi
+    private fun handleCommand(p0: DataSnapshot) {
+        val roomKey = p0.key.toString()
+        if (p0.child(CHILD_ROOMSTATUS_KEY).value.toString() == "create") {
+            GameService(roomKey).create()
         }
-    }*/
+//        if (p0.key!!.contains("start")) {
+////            val playerIdList = ArrayList<String>()
+//            val playerStatusList = ArrayList<Result>()
+////            val playerStatus = Result()
+//            p0.children.forEach{
+//                val id = it.key.toString()
+//                val playerName = it.value.toString()
+////                playerIdList.add(it.key.toString())
+//                playerStatusList.add(Result(playerName, id))
+//            }
+//            val checkMulti = p0.childrenCount != 1L
+//            startQuiz(roomKey, playerStatusList, checkMulti)
+            //delete command after finish task
+//            commandRef.child(p0.key!!).setValue(null)
+//        }
+    }
 
-
-//    private suspend fun doTask(task: Int): String {
-//        delay((1000L..5000L).random())
-//        Log.d("Main", "thread$task OK .........")
-//        return "task $task ...OK"
+//    override fun onPause() {
+//        super.onPause()
+//        FirebaseDatabase.getInstance().purgeOutstandingWrites()
 //    }
-
 }
