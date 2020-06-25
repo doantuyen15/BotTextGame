@@ -23,50 +23,58 @@ class GameService(private val roomId: String) {
     private var round = 0
     private val quizId = (1..dbSorted.size).toMutableList()
     private var totalPlayer = 0
-    private var endGame = false
+    private var isQuit = false
     var attackers: MutableList<DataSnapshot> = mutableListOf()
 
     private val roomCommandRef = commandRef.child(roomId)
     private val currentRoomRef = roomRef.child(roomId)
 
-    private fun waitForAnswer(timeOut: Long) = CoroutineScope(Dispatchers.Default).launch {
-        Log.d("flowAttacking in ${Thread.currentThread().name}", "scope launch")
-        withTimeoutOrNull(timeOut) {
-            flowAttacking.collect {
-                delay(1500L)
-                Log.d("flowAttacking", "scope cancel")
+    private fun waitForAnswer(timeOut: Long = 0L){
+        val scopeAttacker = CoroutineScope(Dispatchers.Default)
+        scopeAttacker.launch {
+            Log.d("flowAttacking in ${Thread.currentThread().name}", "scope launch")
+            withTimeoutOrNull(timeOut) {
+                flowAttacking.collect {
+                    delay(1500L)
+                    Log.d("flowAttacking", "scope cancel")
 //                sendRoundResult(attackers)
-                this.cancel()
+                    cancel()
+                }
             }
+            cancel()
+            Log.d("wait for answer in thread: ${Thread.currentThread().name}", "scope active? =$isActive")
         }
-        this.cancel()
-        Log.d("wait for answer in thread: ${Thread.currentThread().name}", "scope active? =${this.isActive}")
     }
 
-    private fun checking() = CoroutineScope(Dispatchers.Default).launch {
-        Log.d("checking in thread: ${Thread.currentThread().name}", "round = $round")
-        val checkList = playerList
-        currentRoomRef.child(CHILD_ROOMSTATUS_KEY).setValue("checking").await()
-        withTimeoutOrNull(2500L) {
-            flowChecking.collect { player ->
-                checkList.remove(player)
+    private fun checking() {
+        val scopeChecking = CoroutineScope(Dispatchers.Default)
+        scopeChecking. launch {
+            Log.d("checking in thread: ${Thread.currentThread().name}", "round = $round")
+            val checkList = playerList
+            currentRoomRef.child(CHILD_ROOMSTATUS_KEY).setValue("checking").await()
+            withTimeoutOrNull(2500L) {
+                flowChecking.collect { player ->
+                    checkList.remove(player)
+                }
             }
-        }
-        var message = ""
-        if (checkList.count() == totalPlayer) {//All disconnected
-            quitAndClearRoom()
-        } else if (checkList.count() != 0) {
-            checkList.forEach { player ->
-                message += "${player.key} was offline\n"
+            var message = ""
+            if (checkList.count() == totalPlayer) {//All disconnected
+                quitAndClearRoom()
+            } else if (checkList.count() != 0 && !isQuit) {
+                checkList.forEach { player ->
+                    message += "${player.key} was offline\n"
+                }
+                currentRoomRef.child(CHILD_MESSAGE_KEY)
+                    .push()
+                    .setValue(Message(message))
             }
-            currentRoomRef.child(CHILD_MESSAGE_KEY)
-                .push()
-                .setValue(Message(message))
+            delay(2500L)
+            cancel()
+            if(!isQuit){
+                pushQuiz()
+            }
+            Log.d("checking in thread: ${Thread.currentThread().name}", "scope active? =$isActive")
         }
-        delay(2500L)
-        pushQuiz()
-        this.cancel()
-        Log.d("checking in thread: ${Thread.currentThread().name}", "scope active? =${this.isActive}")
     }
 
     private val handleListener = object : ValueEventListener {
@@ -90,8 +98,17 @@ class GameService(private val roomId: String) {
         when (p0.value.toString()) {
             "quit" -> quitAndClearRoom()
             "start" -> start()
+            "restart" -> restart()
         }
+    }
 
+    private fun restart() {
+        roomRef.apply {
+            child(roomId).child(CHILD_ROOMSTATUS_KEY)
+                .setValue("open")
+            child(CHILD_LISTROOMS_KEY).child(roomId).child(CHILD_ROOMSTATUS_KEY)
+                .setValue("open")
+        }
     }
 
     private fun start() {
@@ -107,12 +124,14 @@ class GameService(private val roomId: String) {
                             val playerInfo = p0.children.first()
                             val id = playerInfo.key.toString()
                             val playerName = playerInfo.value.toString()
+                            playerList[id] = playerName
                             playerStatusList.add(Result(playerName, id))
                         } else {
                             multiMode = true
                             p0.children.forEach {
                                 val id = it.key.toString()
                                 val playerName = it.value.toString()
+                                playerList[id] = playerName
                                 playerStatusList.add(Result(playerName, id))
                             }
                         }
@@ -130,7 +149,8 @@ class GameService(private val roomId: String) {
     }
 
     private fun quitAndClearRoom() {
-        scopeCancel()
+//        scopeCancel()
+        isQuit = true
         apply {
             roomCommandRef.removeEventListener(handleListener)
             roomCommandRef.setValue(null)
@@ -148,7 +168,9 @@ class GameService(private val roomId: String) {
             }
 
             override fun onDataChange(p0: DataSnapshot) {
-                if (p0.value.toString() == "quit") quitAndClearRoom()
+                if (p0.value.toString() == "quit") {
+                    cancel()
+                }
                 if (p0.hasChildren()) {
                     attackers = p0.children.toMutableList()
                     this@callbackFlow.sendBlocking(attackers)
@@ -156,7 +178,9 @@ class GameService(private val roomId: String) {
             }
         })
         awaitClose {
-            sendRoundResult(attackers)
+            if(!isQuit){
+                sendRoundResult(attackers)
+            }
             databaseReference.removeEventListener(eventListener)
         }
     }
@@ -201,43 +225,16 @@ class GameService(private val roomId: String) {
         val randomId = quizId.random()
         quizId.remove(randomId)
         command["round"] = Round(round, randomId.toString())
-        commandRef.child(roomId)
-            .setValue(null)
-        currentRoomRef.updateChildren(command)
-            .addOnCompleteListener {
-                val timeOut = dbSorted[randomId]?.timeOut ?: 0L
-                waitForAnswer(timeOut)
-            }
+        if(!isQuit) {
+            commandRef.child(roomId)
+                .setValue(null)
+            currentRoomRef.updateChildren(command)
+                .addOnCompleteListener {
+                    val timeOut = dbSorted[randomId]?.timeOut ?: 0L
+                    waitForAnswer(timeOut)
+                }
+        }
     }
-
-//    private fun checking() {
-//        Log.d("checking", "round = $round")
-//        val checkList = playerList
-//        currentRoomRef.child(CHILD_ROOMSTATUS_KEY).setValue("checking")
-//            .addOnCompleteListener {
-//                scopeChecking.launch {
-//                    withTimeoutOrNull(2500L) {
-//                        flowChecking.collect { player ->
-//                            checkList.remove(player)
-//                        }
-//                    }
-//                    var message = ""
-//                    if (checkList.count() == totalPlayer) {//All disconnected
-//                        quitAndClearRoom()
-//                    } else if (checkList.count() != 0) {
-//                        checkList.forEach { player ->
-//                            message += "${player.key} was offline\n"
-//                        }
-//                        currentRoomRef.child(CHILD_MESSAGE_KEY)
-//                            .push()
-//                            .setValue(Message(message))
-//                    }
-//                    delay(2500L)
-//                    pushQuiz()
-////                    scopeChecking.cancel()
-//                }
-//            }
-//    }
 
     private fun sendRoundResult(attackers: MutableList<DataSnapshot>) {
         val command = HashMap<String, Any?>()
@@ -298,11 +295,5 @@ class GameService(private val roomId: String) {
             roomRef.child(CHILD_LISTROOMS_KEY).child(roomId).child(CHILD_ROOMSTATUS_KEY)
                 .setValue("finish")
         }
-    }
-
-    private fun scopeCancel() {
-//        scope.cancel()
-//        scopeChecking.cancel()
-//        Log.d("firebaseListener", "scope active? later =${scope.isActive}")
     }
 }
