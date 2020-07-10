@@ -95,10 +95,22 @@ class GameService(private val roomId: String) {
     }
 
     private fun handleCommand(p0: DataSnapshot) {
-        when (p0.value.toString()) {
+        val commandKey = p0.value.toString()
+        when (commandKey) {
             "quit" -> quitAndClearRoom()
             "start" -> start()
             "restart" -> restart()
+//            else -> {
+//                if (commandKey.contains("kick")) {
+//                    val kickedPlayerId = commandKey.substringAfter("kick")
+//                    playerList.remove(kickedPlayerId)
+//                    playerStatusList.forEachIndexed { index, player ->
+//                        if (player.playerId == kickedPlayerId) {
+//                            playerStatusList.removeAt(index)
+//                        }
+//                    }
+//                }
+//            }
         }
     }
 
