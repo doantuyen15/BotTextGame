@@ -62,7 +62,7 @@ class GameService(private val roomId: String) {
                 quitAndClearRoom()
             } else if (checkList.count() != 0 && !isQuit) {
                 checkList.forEach { player ->
-                    message += "${player.key} was offline\n"
+                    message += "${playerList[player.key]} was offline\n"
                 }
                 currentRoomRef.child(CHILD_MESSAGE_KEY)
                     .push()
@@ -99,19 +99,32 @@ class GameService(private val roomId: String) {
             "quit" -> quitAndClearRoom()
             "start" -> start()
             "restart" -> restart()
+            "help" -> sendGuide()
             else -> if (commandKey.contains("out")){
-                roomCommandRef.setValue(null)
                 removePlayer(commandKey.substringAfter("out"))
                 Log.d("OUT", commandKey.substringAfter("out"))
             }
         }
     }
 
+    private fun sendGuide() {
+        currentRoomRef.child(CHILD_MESSAGE_KEY)
+            .push()
+            .setValue(Message("Your answer must include the article for example instead of “apple” your answer must be “an apple”\n" +
+                    "HP bar for each player, if you forfeit or giving a wrong answer or your foe faster than you, you gonna  lost some HP, when your HP bar turn to 0, it’s your game over, the last one stand will win that match."))
+    }
+
     private fun removePlayer(id: String) {
-        playerStatusList.forEach {
-            if(it.playerId == id) {
-                playerStatusList.remove(it)
-            }
+        roomRef.apply {
+            child(CHILD_LISTROOMS_KEY).child(CHILD_JOINEDUSER_KEY)
+                .child(id)
+                .setValue(null)
+            child(roomId).child(CHILD_JOINEDUSER_KEY)
+                .child(id)
+                .setValue(null)
+        }
+        playerStatusList.removeIf{
+            it.playerId == id
         }
         playerList.remove(id)
         totalPlayer --
@@ -160,7 +173,7 @@ class GameService(private val roomId: String) {
                         checking()
                     }
                 })
-            child(roomId).child(CHILD_MESSAGE_KEY)
+            currentRoomRef.child(CHILD_MESSAGE_KEY)
                 .push()
                 .setValue(Message("Game Start!"))
             child(roomId).child(CHILD_ROOMSTATUS_KEY)

@@ -56,128 +56,128 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startQuiz(
-        roomId: String,
-        playerStatusList: ArrayList<Result>,
-        multi: Boolean
-    ) {
-//        Log.d("startQuiz", "HP is ")
-        var endGame = false
-        val currentRoom = roomRef.child(roomId)
-        val job = GlobalScope.launch(Dispatchers.IO) {
-            var totalPlayer = playerStatusList.count()
-            val quizId = (1..dbSorted.size).toMutableList()
-
-//            val playerStatus = HashMap<String, Any>()
-//            val playerHp = mutableListOf<Long>()
-//            playerId.forEach {
-//                playerHp.add(100)
-//                playerStatus[it] = PLayerStatus(playerHp[playerId.indexOf(it)])
-//            }
-
-            var round = 1
-            while (!endGame) {
-                val command = HashMap<String, Any?>()
-                val randomId = quizId.random()
-                quizId.remove(randomId)
-                command["round"] = Round(round, randomId.toString())
-                currentRoom.updateChildren(command).await()
-                val timeOut = dbSorted[randomId]?.timeOut ?: 0L
-                val attackers = withContext(Dispatchers.IO) {
-                    waitForAnswer(timeOut, roomId)
-                }
-                //send to client round's result
-                val attacker = attackers.getOrNull(0).toString()
-                val defender = attackers.getOrNull(1).toString()
-                var messageAtk: String = ""
-                var messageDef: String = ""
-                if (!attackers.isNullOrEmpty()) {
-                    command["attacker"] = attacker
-                    attackers.getOrNull(1)?.let { command["defender"] = defender }
-                    command["surrender"] = null
-                } else {
-                    command["surrender"] = "round$round"
-                    command["attacker"] = null
-                    command["defender"] = null
-                }
-                playerStatusList.map {
-                    when (it.playerId) {
-                        attacker -> {
-                            it.increaseAttack()
-                            messageAtk = ("First: ${it.playerName}")
-                        }
-                        defender -> {
-                            it.increaseDefend()
-                            messageDef += ("\nSecond is: ${it.playerName}")
-                        }
-                        else -> it.increaseSurrender()
-                    }
-                    if(it.isDeadOrOut()) { // return false when this player is out or lose
-                        totalPlayer--
-                    }
-                }
-//                playerStatusList.forEachIndexed { index, status ->
-//                    val playerId = ""
-//                    when (index) {
-//                        playerIdList.indexOf(attacker) -> status.increaseAttack()
-//                        playerIdList.indexOf(defender) -> status.increaseDefend()
-//                        else -> status.increaseSurrender()
+/*    private fun startQuiz(
+//        roomId: String,
+//        playerStatusList: ArrayList<Result>,
+//        multi: Boolean
+//    ) {
+////        Log.d("startQuiz", "HP is ")
+//        var endGame = false
+//        val currentRoom = roomRef.child(roomId)
+//        val job = GlobalScope.launch(Dispatchers.IO) {
+//            var totalPlayer = playerStatusList.count()
+//            val quizId = (1..dbSorted.size).toMutableList()
+//
+////            val playerStatus = HashMap<String, Any>()
+////            val playerHp = mutableListOf<Long>()
+////            playerId.forEach {
+////                playerHp.add(100)
+////                playerStatus[it] = PLayerStatus(playerHp[playerId.indexOf(it)])
+////            }
+//
+//            var round = 1
+//            while (!endGame) {
+//                val command = HashMap<String, Any?>()
+//                val randomId = quizId.random()
+//                quizId.remove(randomId)
+//                command["round"] = Round(round, randomId.toString())
+//                currentRoom.updateChildren(command).await()
+//                val timeOut = dbSorted[randomId]?.timeOut ?: 0L
+//                val attackers = withContext(Dispatchers.IO) {
+//                    waitForAnswer(timeOut, roomId)
+//                }
+//                //send to client round's result
+//                val attacker = attackers.getOrNull(0).toString()
+//                val defender = attackers.getOrNull(1).toString()
+//                var messageAtk: String = ""
+//                var messageDef: String = ""
+//                if (!attackers.isNullOrEmpty()) {
+//                    command["attacker"] = attacker
+//                    attackers.getOrNull(1)?.let { command["defender"] = defender }
+//                    command["surrender"] = null
+//                } else {
+//                    command["surrender"] = "round$round"
+//                    command["attacker"] = null
+//                    command["defender"] = null
+//                }
+//                playerStatusList.map {
+//                    when (it.playerId) {
+//                        attacker -> {
+//                            it.increaseAttack()
+//                            messageAtk = ("First: ${it.playerName}")
+//                        }
+//                        defender -> {
+//                            it.increaseDefend()
+//                            messageDef += ("\nSecond is: ${it.playerName}")
+//                        }
+//                        else -> it.increaseSurrender()
 //                    }
-//                    if(status.isDeadOrOut()) { // return false when this player is out or lose
+//                    if(it.isDeadOrOut()) { // return false when this player is out or lose
 //                        totalPlayer--
 //                    }
-////                    if (index != playerIdList.indexOf(attacker) && index != playerIdList.indexOf(defender)) {
-////                        status[attacker]!!.
+//                }
+////                playerStatusList.forEachIndexed { index, status ->
+////                    val playerId = ""
+////                    when (index) {
+////                        playerIdList.indexOf(attacker) -> status.increaseAttack()
+////                        playerIdList.indexOf(defender) -> status.increaseDefend()
+////                        else -> status.increaseSurrender()
 ////                    }
-////                    if (index == playerIdList.indexOf(defender)) {
-////                        value!!.playerHp -= 3L
-////                    }
-////                    if (value!!.playerHp <= 0L) {
+////                    if(status.isDeadOrOut()) { // return false when this player is out or lose
 ////                        totalPlayer--
 ////                    }
-//               }
-                if (!multi && totalPlayer == 0) {
-                    endGame = true
-                } else if (multi && totalPlayer <= 0) {
-                    endGame = true
-                } else round++
-
-                val status = HashMap<String, Any>()
-                playerStatusList.sortByDescending{it.hp}
-                playerStatusList.forEach {
-                    status[it.playerId] = it.toMap()
-                }
-
-//                command["playerStatus"] = playerIdList.zip(playerStatusList).toMap()
-                command["playerStatus"] = status
-                var message = messageAtk
-                if (!messageDef.isBlank()){
-                    message += messageDef
-                }
-                if (message.isNotEmpty()){
-                    currentRoom.child("message").push().setValue(Message(message = message))
-                }
-                currentRoom.updateChildren(command).await()
-                delay(5000)
-            }
-            //end game
-            if (endGame){
-                currentRoom.child("roomStatus").setValue("ending")
-            }
-        }
-        val mEventListener = object: ValueEventListener{
-            override fun onCancelled(p0: DatabaseError) {
-            }
-            override fun onDataChange(p0: DataSnapshot) {
-                if (p0.value == true){
-                    endGame = true
-                    currentRoom.setValue(null)
-                    commandRef.child("clear$roomId").setValue(null)
-                }
-            }
-        }
-        commandRef.child("clear$roomId").addValueEventListener(mEventListener)
-    }
+//////                    if (index != playerIdList.indexOf(attacker) && index != playerIdList.indexOf(defender)) {
+//////                        status[attacker]!!.
+//////                    }
+//////                    if (index == playerIdList.indexOf(defender)) {
+//////                        value!!.playerHp -= 3L
+//////                    }
+//////                    if (value!!.playerHp <= 0L) {
+//////                        totalPlayer--
+//////                    }
+////               }
+//                if (!multi && totalPlayer == 0) {
+//                    endGame = true
+//                } else if (multi && totalPlayer <= 0) {
+//                    endGame = true
+//                } else round++
+//
+//                val status = HashMap<String, Any>()
+//                playerStatusList.sortByDescending{it.hp}
+//                playerStatusList.forEach {
+//                    status[it.playerId] = it.toMap()
+//                }
+//
+////                command["playerStatus"] = playerIdList.zip(playerStatusList).toMap()
+//                command["playerStatus"] = status
+//                var message = messageAtk
+//                if (!messageDef.isBlank()){
+//                    message += messageDef
+//                }
+//                if (message.isNotEmpty()){
+//                    currentRoom.child("message").push().setValue(Message(message = message))
+//                }
+//                currentRoom.updateChildren(command).await()
+//                delay(5000)
+//            }
+//            //end game
+//            if (endGame){
+//                currentRoom.child("roomStatus").setValue("ending")
+//            }
+//        }
+//        val mEventListener = object: ValueEventListener{
+//            override fun onCancelled(p0: DatabaseError) {
+//            }
+//            override fun onDataChange(p0: DataSnapshot) {
+//                if (p0.value == true){
+//                    endGame = true
+//                    currentRoom.setValue(null)
+//                    commandRef.child("clear$roomId").setValue(null)
+//                }
+//            }
+//        }
+//        commandRef.child("clear$roomId").addValueEventListener(mEventListener)
+    }*/
 
 //    private fun sendResult(
 //        currentRoom: String?,
@@ -206,7 +206,7 @@ class MainActivity : AppCompatActivity() {
 //        fun onReceivedAttacker()
 //    }
 
-    private suspend fun waitForAnswer(timeOut: Long, roomid: String): List<String> {
+   /* private suspend fun waitForAnswer(timeOut: Long, roomid: String): List<String> {
         val attackerId: MutableList<String> = mutableListOf()
 //        Log.d("$roomid", "waiting for answer")
         commandRef.child("attack$roomid").setValue(null).await()
@@ -250,7 +250,7 @@ class MainActivity : AppCompatActivity() {
 //            val attackerId = UserObserver(roomid).observe()
 //        }
         return attackerId.distinct()
-    }
+    }*/
 
 //    interface CommandListener{
 //        fun onCommandRetrieve(p0: DataSnapshot)
