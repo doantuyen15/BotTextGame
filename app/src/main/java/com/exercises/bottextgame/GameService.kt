@@ -21,7 +21,7 @@ class GameService(private val roomId: String) {
     private var multiMode: Boolean = false
     private var isPlaying = false
     private var round = 0
-    private val quizId = (1..dbSorted.size).toMutableList()
+    private var quizId = (1..dbSorted.size).toMutableList()
     private var totalPlayer = 0
     private var isQuit = false
     var attackers: MutableList<DataSnapshot> = mutableListOf()
@@ -95,23 +95,26 @@ class GameService(private val roomId: String) {
     }
 
     private fun handleCommand(p0: DataSnapshot) {
-        val commandKey = p0.value.toString()
-        when (commandKey) {
+        when (val commandKey = p0.value.toString()) {
             "quit" -> quitAndClearRoom()
             "start" -> start()
             "restart" -> restart()
-//            else -> {
-//                if (commandKey.contains("kick")) {
-//                    val kickedPlayerId = commandKey.substringAfter("kick")
-//                    playerList.remove(kickedPlayerId)
-//                    playerStatusList.forEachIndexed { index, player ->
-//                        if (player.playerId == kickedPlayerId) {
-//                            playerStatusList.removeAt(index)
-//                        }
-//                    }
-//                }
-//            }
+            else -> if (commandKey.contains("out")){
+                roomCommandRef.setValue(null)
+                removePlayer(commandKey.substringAfter("out"))
+                Log.d("OUT", commandKey.substringAfter("out"))
+            }
         }
+    }
+
+    private fun removePlayer(id: String) {
+        playerStatusList.forEach {
+            if(it.playerId == id) {
+                playerStatusList.remove(it)
+            }
+        }
+        playerList.remove(id)
+        totalPlayer --
     }
 
     private fun restart() {
@@ -121,16 +124,21 @@ class GameService(private val roomId: String) {
             child(CHILD_LISTROOMS_KEY).child(roomId).child(CHILD_ROOMSTATUS_KEY)
                 .setValue("open")
         }
+        playerStatusList.clear()
+        playerList.clear()
+        round = 0
+        quizId = (1..dbSorted.size).toMutableList()
     }
 
     private fun start() {
-        roomRef.apply {
+        roomRef.child(CHILD_LISTROOMS_KEY).apply {
             child(roomId).child(CHILD_JOINEDUSER_KEY)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onCancelled(p0: DatabaseError) {
                     }
 
                     override fun onDataChange(p0: DataSnapshot) {
+                        Thread.sleep(1000L)
                         if (p0.childrenCount == 1L) {
                             multiMode = false
                             val playerInfo = p0.children.first()
@@ -148,13 +156,14 @@ class GameService(private val roomId: String) {
                             }
                         }
                         totalPlayer = playerStatusList.count()
+                        playerStatusList.onEach { it.resetStatus() }
                         checking()
                     }
                 })
             child(roomId).child(CHILD_MESSAGE_KEY)
                 .push()
                 .setValue(Message("Game Start!"))
-            child(CHILD_LISTROOMS_KEY).child(roomId).child(CHILD_ROOMSTATUS_KEY)
+            child(roomId).child(CHILD_ROOMSTATUS_KEY)
                 .setValue("start")
         }
 
@@ -173,7 +182,7 @@ class GameService(private val roomId: String) {
 
     private val flowAttacking = callbackFlow<MutableList<DataSnapshot>> {
         attackers = mutableListOf()
-        val databaseReference = commandRef.child(roomId).orderByValue()
+        val databaseReference = commandRef.child(roomId).orderByKey()
         val eventListener = databaseReference.addValueEventListener(object : ValueEventListener {
             override fun onCancelled(p0: DatabaseError) {
                 this@callbackFlow.close(p0.toException())
@@ -183,7 +192,7 @@ class GameService(private val roomId: String) {
                 if (p0.value.toString() == "quit") {
                     cancel()
                 }
-                if (p0.hasChildren()) {
+                if (p0.hasChildren() && !p0.value.toString().contains("out")) {
                     attackers = p0.children.toMutableList()
                     this@callbackFlow.sendBlocking(attackers)
                 }

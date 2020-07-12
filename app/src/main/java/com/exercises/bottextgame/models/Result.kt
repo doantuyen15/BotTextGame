@@ -35,6 +35,14 @@ data class Result(
             false
         }
     }
+    fun resetStatus() {
+        this.hp = 100L
+        this.attack = 0L
+        this.defend = 0L
+        this.surrender = 0L
+        this.isDead = false
+        this.isConformDead = false
+    }
     private fun decreaseHp(damage: Long) {
         if (this.hp >= damage){
             this.hp -= damage
